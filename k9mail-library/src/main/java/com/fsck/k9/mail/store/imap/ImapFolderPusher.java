@@ -120,6 +120,44 @@ class ImapFolderPusher extends ImapFolder {
         super.handleUntaggedResponse(response);
     }
 
+    /**
+     * Ensure the DONE continuation is only sent when the IDLE command was sent and hasn't completed yet.
+     */
+    private static class IdleStopper {
+        private boolean acceptDoneContinuation = false;
+        private ImapConnection imapConnection;
+
+
+        public synchronized void startAcceptingDoneContinuation(ImapConnection connection) {
+            if (connection == null) {
+                throw new NullPointerException("connection must not be null");
+            }
+
+            acceptDoneContinuation = true;
+            imapConnection = connection;
+        }
+
+        public synchronized void stopAcceptingDoneContinuation() {
+            acceptDoneContinuation = false;
+            imapConnection = null;
+        }
+
+        public synchronized void stopIdle() {
+            if (acceptDoneContinuation) {
+                acceptDoneContinuation = false;
+                sendDone();
+            }
+        }
+
+        private void sendDone() {
+            try {
+                imapConnection.setReadTimeout(RemoteStore.SOCKET_READ_TIMEOUT);
+                imapConnection.sendContinuation("DONE");
+            } catch (IOException e) {
+                imapConnection.close();
+            }
+        }
+    }
 
     private class PushRunnable implements Runnable, UntaggedHandler {
         private int delayTime = NORMAL_DELAY_TIME;
@@ -324,7 +362,7 @@ class ImapFolderPusher extends ImapFolder {
 
         private boolean openConnectionIfNecessary() throws MessagingException {
             ImapConnection oldConnection = connection;
-            internalOpen(OPEN_MODE_RO, INVALID_UID_VALIDITY, INVALID_HIGHEST_MOD_SEQ, true);
+            internalOpen(OPEN_MODE_RO, INVALID_UID_VALIDITY, INVALID_HIGHEST_MOD_SEQ);
 
             ImapConnection conn = connection;
 
@@ -629,45 +667,6 @@ class ImapFolderPusher extends ImapFolder {
             }
 
             return oldUidNext;
-        }
-    }
-
-    /**
-     * Ensure the DONE continuation is only sent when the IDLE command was sent and hasn't completed yet.
-     */
-    private static class IdleStopper {
-        private boolean acceptDoneContinuation = false;
-        private ImapConnection imapConnection;
-
-
-        public synchronized void startAcceptingDoneContinuation(ImapConnection connection) {
-            if (connection == null) {
-                throw new NullPointerException("connection must not be null");
-            }
-
-            acceptDoneContinuation = true;
-            imapConnection = connection;
-        }
-
-        public synchronized void stopAcceptingDoneContinuation() {
-            acceptDoneContinuation = false;
-            imapConnection = null;
-        }
-
-        public synchronized void stopIdle() {
-            if (acceptDoneContinuation) {
-                acceptDoneContinuation = false;
-                sendDone();
-            }
-        }
-
-        private void sendDone() {
-            try {
-                imapConnection.setReadTimeout(RemoteStore.SOCKET_READ_TIMEOUT);
-                imapConnection.sendContinuation("DONE");
-            } catch (IOException e) {
-                imapConnection.close();
-            }
         }
     }
 }
