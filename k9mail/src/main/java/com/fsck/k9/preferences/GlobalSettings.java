@@ -39,6 +39,241 @@ public class GlobalSettings {
     static final Map<String, TreeMap<Integer, SettingsDescription>> SETTINGS;
     private static final Map<Integer, SettingsUpgrader> UPGRADERS;
 
+    static Map<String, Object> validate(int version, Map<String, String> importedSettings) {
+        return Settings.validate(version, SETTINGS, importedSettings, false);
+    }
+
+    public static Set<String> upgrade(int version, Map<String, Object> validatedSettings) {
+        return Settings.upgrade(version, UPGRADERS, SETTINGS, validatedSettings);
+    }
+
+    public static Map<String, String> convert(Map<String, Object> settings) {
+        return Settings.convert(settings, SETTINGS);
+    }
+
+    static Map<String, String> getGlobalSettings(Storage storage) {
+        Map<String, String> result = new HashMap<>();
+        for (String key : SETTINGS.keySet()) {
+            String value = storage.getString(key, null);
+            if (value != null) {
+                result.put(key, value);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Upgrades the settings from version 11 to 12
+     *
+     * Map the 'keyguardPrivacy' value to the new NotificationHideSubject enum.
+     */
+    private static class SettingsUpgraderV12 implements SettingsUpgrader {
+
+        @Override
+        public Set<String> upgrade(Map<String, Object> settings) {
+            Boolean keyguardPrivacy = (Boolean) settings.get("keyguardPrivacy");
+            if (keyguardPrivacy != null && keyguardPrivacy) {
+                // current setting: only show subject when unlocked
+                settings.put("notificationHideSubject", NotificationHideSubject.WHEN_LOCKED);
+            } else {
+                // always show subject [old default]
+                settings.put("notificationHideSubject", NotificationHideSubject.NEVER);
+            }
+            return new HashSet<>(Collections.singletonList("keyguardPrivacy"));
+        }
+    }
+
+    /**
+     * Upgrades the settings from version 23 to 24.
+     *
+     * <p>
+     * Set <em>messageViewTheme</em> to {@link K9.Theme#USE_GLOBAL} if <em>messageViewTheme</em> has
+     * the same value as <em>theme</em>.
+     * </p>
+     */
+    private static class SettingsUpgraderV24 implements SettingsUpgrader {
+
+        @Override
+        public Set<String> upgrade(Map<String, Object> settings) {
+            K9.Theme messageViewTheme = (K9.Theme) settings.get("messageViewTheme");
+            K9.Theme theme = (K9.Theme) settings.get("theme");
+            if (theme != null && messageViewTheme != null && theme == messageViewTheme) {
+                settings.put("messageViewTheme", K9.Theme.USE_GLOBAL);
+            }
+
+            return null;
+        }
+    }
+
+    /**
+     * Upgrades the settings from version 30 to 31.
+     *
+     * <p>
+     * Convert value from <em>fontSizeMessageViewContent</em> to
+     * <em>fontSizeMessageViewContentPercent</em>.
+     * </p>
+     */
+    public static class SettingsUpgraderV31 implements SettingsUpgrader {
+
+        public static int convertFromOldSize(int oldSize) {
+            switch (oldSize) {
+                case 1: {
+                    return 40;
+                }
+                case 2: {
+                    return 75;
+                }
+                case 4: {
+                    return 175;
+                }
+                case 5: {
+                    return 250;
+                }
+                case 3:
+                default: {
+                    return 100;
+                }
+            }
+        }
+
+        @Override
+        public Set<String> upgrade(Map<String, Object> settings) {
+            int oldSize = (Integer) settings.get("fontSizeMessageViewContent");
+
+            int newSize = convertFromOldSize(oldSize);
+
+            settings.put("fontSizeMessageViewContentPercent", newSize);
+
+            return new HashSet<>(Collections.singletonList("fontSizeMessageViewContent"));
+        }
+    }
+
+    static class ThemeSetting extends SettingsDescription<K9.Theme> {
+        private static final String THEME_LIGHT = "light";
+        private static final String THEME_DARK = "dark";
+
+        ThemeSetting(K9.Theme defaultValue) {
+            super(defaultValue);
+        }
+
+        @Override
+        public K9.Theme fromString(String value) throws InvalidSettingValueException {
+            try {
+                Integer theme = Integer.parseInt(value);
+                if (theme == K9.Theme.LIGHT.ordinal() ||
+                        // We used to store the resource ID of the theme in the preference storage,
+                        // but don't use the database upgrade mechanism to update the values. So
+                        // we have to deal with the old format here.
+                        theme == android.R.style.Theme_Light) {
+                    return K9.Theme.LIGHT;
+                } else if (theme == K9.Theme.DARK.ordinal() || theme == android.R.style.Theme) {
+                    return K9.Theme.DARK;
+                }
+            } catch (NumberFormatException e) { /* do nothing */ }
+
+            throw new InvalidSettingValueException();
+        }
+
+        @Override
+        public K9.Theme fromPrettyString(String value) throws InvalidSettingValueException {
+            if (THEME_LIGHT.equals(value)) {
+                return K9.Theme.LIGHT;
+            } else if (THEME_DARK.equals(value)) {
+                return K9.Theme.DARK;
+            }
+
+            throw new InvalidSettingValueException();
+        }
+
+        @Override
+        public String toPrettyString(K9.Theme value) {
+            switch (value) {
+                case DARK: {
+                    return THEME_DARK;
+                }
+                default: {
+                    return THEME_LIGHT;
+                }
+            }
+        }
+
+        @Override
+        public String toString(K9.Theme value) {
+            return Integer.toString(value.ordinal());
+        }
+    }
+
+    private static class SubThemeSetting extends ThemeSetting {
+        private static final String THEME_USE_GLOBAL = "use_global";
+
+        SubThemeSetting(Theme defaultValue) {
+            super(defaultValue);
+        }
+
+        @Override
+        public K9.Theme fromString(String value) throws InvalidSettingValueException {
+            try {
+                Integer theme = Integer.parseInt(value);
+                if (theme == K9.Theme.USE_GLOBAL.ordinal()) {
+                    return K9.Theme.USE_GLOBAL;
+                }
+
+                return super.fromString(value);
+            } catch (NumberFormatException e) {
+                throw new InvalidSettingValueException();
+            }
+        }
+
+        @Override
+        public K9.Theme fromPrettyString(String value) throws InvalidSettingValueException {
+            if (THEME_USE_GLOBAL.equals(value)) {
+                return K9.Theme.USE_GLOBAL;
+            }
+
+            return super.fromPrettyString(value);
+        }
+
+        @Override
+        public String toPrettyString(K9.Theme value) {
+            if (value == K9.Theme.USE_GLOBAL) {
+                return THEME_USE_GLOBAL;
+            }
+
+            return super.toPrettyString(value);
+        }
+    }
+
+    private static class TimeSetting extends SettingsDescription<String> {
+        TimeSetting(String defaultValue) {
+            super(defaultValue);
+        }
+
+        @Override
+        public String fromString(String value) throws InvalidSettingValueException {
+            if (!value.matches(TimePickerPreference.VALIDATION_EXPRESSION)) {
+                throw new InvalidSettingValueException();
+            }
+            return value;
+        }
+    }
+
+    private static class DirectorySetting extends SettingsDescription<String> {
+        DirectorySetting(File defaultPath) {
+            super(defaultPath.toString());
+        }
+
+        @Override
+        public String fromString(String value) throws InvalidSettingValueException {
+            try {
+                if (new File(value).isDirectory()) {
+                    return value;
+                }
+            } catch (Exception e) { /* do nothing */ }
+
+            throw new InvalidSettingValueException();
+        }
+    }
+
     static {
         Map<String, TreeMap<Integer, SettingsDescription>> s = new LinkedHashMap<>();
 
@@ -81,6 +316,12 @@ public class GlobalSettings {
         ));
         s.put("enableSensitiveLogging", Settings.versions(
                 new V(1, new BooleanSetting(false))
+        ));
+        s.put("useCondstore", Settings.versions(
+                new V(48, new BooleanSetting(true))
+        ));
+        s.put("useQresync", Settings.versions(
+                new V(48, new BooleanSetting(true))
         ));
         s.put("fontSizeAccountDescription", Settings.versions(
                 new V(1, new FontSizeSetting(FontSizes.FONT_DEFAULT))
@@ -300,240 +541,5 @@ public class GlobalSettings {
         u.put(31, new SettingsUpgraderV31());
 
         UPGRADERS = Collections.unmodifiableMap(u);
-    }
-
-    static Map<String, Object> validate(int version, Map<String, String> importedSettings) {
-        return Settings.validate(version, SETTINGS, importedSettings, false);
-    }
-
-    public static Set<String> upgrade(int version, Map<String, Object> validatedSettings) {
-        return Settings.upgrade(version, UPGRADERS, SETTINGS, validatedSettings);
-    }
-
-    public static Map<String, String> convert(Map<String, Object> settings) {
-        return Settings.convert(settings, SETTINGS);
-    }
-
-    static Map<String, String> getGlobalSettings(Storage storage) {
-        Map<String, String> result = new HashMap<>();
-        for (String key : SETTINGS.keySet()) {
-            String value = storage.getString(key, null);
-            if (value != null) {
-                result.put(key, value);
-            }
-        }
-        return result;
-    }
-
-    /**
-     * Upgrades the settings from version 11 to 12
-     *
-     * Map the 'keyguardPrivacy' value to the new NotificationHideSubject enum.
-     */
-    private static class SettingsUpgraderV12 implements SettingsUpgrader {
-
-        @Override
-        public Set<String> upgrade(Map<String, Object> settings) {
-            Boolean keyguardPrivacy = (Boolean) settings.get("keyguardPrivacy");
-            if (keyguardPrivacy != null && keyguardPrivacy) {
-                // current setting: only show subject when unlocked
-                settings.put("notificationHideSubject", NotificationHideSubject.WHEN_LOCKED);
-            } else {
-                // always show subject [old default]
-                settings.put("notificationHideSubject", NotificationHideSubject.NEVER);
-            }
-            return new HashSet<>(Collections.singletonList("keyguardPrivacy"));
-        }
-    }
-
-    /**
-     * Upgrades the settings from version 23 to 24.
-     *
-     * <p>
-     * Set <em>messageViewTheme</em> to {@link K9.Theme#USE_GLOBAL} if <em>messageViewTheme</em> has
-     * the same value as <em>theme</em>.
-     * </p>
-     */
-    private static class SettingsUpgraderV24 implements SettingsUpgrader {
-
-        @Override
-        public Set<String> upgrade(Map<String, Object> settings) {
-            K9.Theme messageViewTheme = (K9.Theme) settings.get("messageViewTheme");
-            K9.Theme theme = (K9.Theme) settings.get("theme");
-            if (theme != null && messageViewTheme != null && theme == messageViewTheme) {
-                settings.put("messageViewTheme", K9.Theme.USE_GLOBAL);
-            }
-
-            return null;
-        }
-    }
-
-    /**
-     * Upgrades the settings from version 30 to 31.
-     *
-     * <p>
-     * Convert value from <em>fontSizeMessageViewContent</em> to
-     * <em>fontSizeMessageViewContentPercent</em>.
-     * </p>
-     */
-    public static class SettingsUpgraderV31 implements SettingsUpgrader {
-
-        @Override
-        public Set<String> upgrade(Map<String, Object> settings) {
-            int oldSize = (Integer) settings.get("fontSizeMessageViewContent");
-
-            int newSize = convertFromOldSize(oldSize);
-
-            settings.put("fontSizeMessageViewContentPercent", newSize);
-
-            return new HashSet<>(Collections.singletonList("fontSizeMessageViewContent"));
-        }
-
-        public static int convertFromOldSize(int oldSize) {
-            switch (oldSize) {
-                case 1: {
-                    return 40;
-                }
-                case 2: {
-                    return 75;
-                }
-                case 4: {
-                    return 175;
-                }
-                case 5: {
-                    return 250;
-                }
-                case 3:
-                default: {
-                    return 100;
-                }
-            }
-        }
-    }
-
-    static class ThemeSetting extends SettingsDescription<K9.Theme> {
-        private static final String THEME_LIGHT = "light";
-        private static final String THEME_DARK = "dark";
-
-        ThemeSetting(K9.Theme defaultValue) {
-            super(defaultValue);
-        }
-
-        @Override
-        public K9.Theme fromString(String value) throws InvalidSettingValueException {
-            try {
-                Integer theme = Integer.parseInt(value);
-                if (theme == K9.Theme.LIGHT.ordinal() ||
-                        // We used to store the resource ID of the theme in the preference storage,
-                        // but don't use the database upgrade mechanism to update the values. So
-                        // we have to deal with the old format here.
-                        theme == android.R.style.Theme_Light) {
-                    return K9.Theme.LIGHT;
-                } else if (theme == K9.Theme.DARK.ordinal() || theme == android.R.style.Theme) {
-                    return K9.Theme.DARK;
-                }
-            } catch (NumberFormatException e) { /* do nothing */ }
-
-            throw new InvalidSettingValueException();
-        }
-
-        @Override
-        public K9.Theme fromPrettyString(String value) throws InvalidSettingValueException {
-            if (THEME_LIGHT.equals(value)) {
-                return K9.Theme.LIGHT;
-            } else if (THEME_DARK.equals(value)) {
-                return K9.Theme.DARK;
-            }
-
-            throw new InvalidSettingValueException();
-        }
-
-        @Override
-        public String toPrettyString(K9.Theme value) {
-            switch (value) {
-                case DARK: {
-                    return THEME_DARK;
-                }
-                default: {
-                    return THEME_LIGHT;
-                }
-            }
-        }
-
-        @Override
-        public String toString(K9.Theme value) {
-            return Integer.toString(value.ordinal());
-        }
-    }
-
-    private static class SubThemeSetting extends ThemeSetting {
-        private static final String THEME_USE_GLOBAL = "use_global";
-
-        SubThemeSetting(Theme defaultValue) {
-            super(defaultValue);
-        }
-
-        @Override
-        public K9.Theme fromString(String value) throws InvalidSettingValueException {
-            try {
-                Integer theme = Integer.parseInt(value);
-                if (theme == K9.Theme.USE_GLOBAL.ordinal()) {
-                    return K9.Theme.USE_GLOBAL;
-                }
-
-                return super.fromString(value);
-            } catch (NumberFormatException e) {
-                throw new InvalidSettingValueException();
-            }
-        }
-
-        @Override
-        public K9.Theme fromPrettyString(String value) throws InvalidSettingValueException {
-            if (THEME_USE_GLOBAL.equals(value)) {
-                return K9.Theme.USE_GLOBAL;
-            }
-
-            return super.fromPrettyString(value);
-        }
-
-        @Override
-        public String toPrettyString(K9.Theme value) {
-            if (value == K9.Theme.USE_GLOBAL) {
-                return THEME_USE_GLOBAL;
-            }
-
-            return super.toPrettyString(value);
-        }
-    }
-
-    private static class TimeSetting extends SettingsDescription<String> {
-        TimeSetting(String defaultValue) {
-            super(defaultValue);
-        }
-
-        @Override
-        public String fromString(String value) throws InvalidSettingValueException {
-            if (!value.matches(TimePickerPreference.VALIDATION_EXPRESSION)) {
-                throw new InvalidSettingValueException();
-            }
-            return value;
-        }
-    }
-
-    private static class DirectorySetting extends SettingsDescription<String> {
-        DirectorySetting(File defaultPath) {
-            super(defaultPath.toString());
-        }
-
-        @Override
-        public String fromString(String value) throws InvalidSettingValueException {
-            try {
-                if (new File(value).isDirectory()) {
-                    return value;
-                }
-            } catch (Exception e) { /* do nothing */ }
-
-            throw new InvalidSettingValueException();
-        }
     }
 }

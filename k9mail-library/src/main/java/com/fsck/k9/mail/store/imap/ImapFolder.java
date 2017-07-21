@@ -46,6 +46,8 @@ import static com.fsck.k9.mail.store.imap.ImapResponseParser.equalsIgnoreCase;
 
 
 public class ImapFolder extends Folder<ImapMessage> {
+    static final int INVALID_UID_VALIDITY = -1;
+    static final int INVALID_HIGHEST_MOD_SEQ = -1;
     private static final ThreadLocal<SimpleDateFormat> RFC3501_DATE = new ThreadLocal<SimpleDateFormat>() {
         @Override
         protected SimpleDateFormat initialValue() {
@@ -54,19 +56,15 @@ public class ImapFolder extends Folder<ImapMessage> {
     };
     private static final int MORE_MESSAGES_WINDOW_SIZE = 500;
     private static final int FETCH_WINDOW_SIZE = 100;
-    static final int INVALID_UID_VALIDITY = -1;
-    static final int INVALID_HIGHEST_MOD_SEQ = -1;
-
-
+    private final FolderNameCodec folderNameCodec;
+    private final String name;
     protected volatile int messageCount = -1;
     protected volatile long uidNext = -1L;
-    private long uidValidity = INVALID_UID_VALIDITY;
-    private long highestModSeq = INVALID_HIGHEST_MOD_SEQ;
     protected volatile ImapConnection connection;
     protected ImapStore store = null;
     protected Map<Long, String> msgSeqUidMap = new ConcurrentHashMap<Long, String>();
-    private final FolderNameCodec folderNameCodec;
-    private final String name;
+    private long uidValidity = INVALID_UID_VALIDITY;
+    private long highestModSeq = INVALID_HIGHEST_MOD_SEQ;
     private int mode;
     private volatile boolean exists;
     private boolean inSearch = false;
@@ -162,10 +160,10 @@ public class ImapFolder extends Folder<ImapMessage> {
             String encodedFolderName = folderNameCodec.encode(getPrefixedName());
             String escapedFolderName = ImapUtility.encodeString(encodedFolderName);
             SelectOrExamineCommand command;
-            if (connection.isQresyncCapable()) {
+            if (connection.isQresyncCapable() && K9MailLib.shouldUseQresync()) {
                 command = SelectOrExamineCommand.createWithQresyncParameter(mode, escapedFolderName, cachedUidValidity,
                         cachedHighestModSeq);
-            } else if (connection.isCondstoreCapable()) {
+            } else if (connection.isCondstoreCapable() && K9MailLib.shouldUseCondstore()) {
                 command = SelectOrExamineCommand.createWithCondstoreParameter(mode, escapedFolderName);
             } else {
                 command = SelectOrExamineCommand.create(mode, escapedFolderName);

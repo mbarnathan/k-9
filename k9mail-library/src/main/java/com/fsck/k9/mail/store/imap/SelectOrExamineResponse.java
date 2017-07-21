@@ -7,6 +7,7 @@ import java.util.Set;
 
 import com.fsck.k9.mail.Flag;
 import com.fsck.k9.mail.Folder;
+import com.fsck.k9.mail.K9MailLib;
 import com.fsck.k9.mail.MessagingException;
 
 import static com.fsck.k9.mail.store.imap.ImapResponseParser.equalsIgnoreCase;
@@ -20,17 +21,45 @@ class SelectOrExamineResponse {
     private QresyncParamResponse qresyncParamResponse;
     private Boolean readWriteMode;
 
-    private SelectOrExamineResponse(List<ImapResponse> imapResponses, ImapFolder folder) throws IOException,
-            MessagingException {
-        parse(imapResponses, folder);
-    }
-
     public static SelectOrExamineResponse newInstance(List<ImapResponse> imapResponses, ImapFolder folder) throws
             IOException, MessagingException {
         if (!isResponseValid(imapResponses)) {
             return null;
         }
         return new SelectOrExamineResponse(imapResponses, folder);
+    }
+
+    private static Boolean isModeReadWriteIfAvailable(ImapResponse imapResponse) {
+        if (!imapResponse.isList(1)) {
+            return null;
+        }
+
+        ImapList responseTextList = imapResponse.getList(1);
+        if (!responseTextList.isString(0)) {
+            return null;
+        }
+
+        String responseCode = responseTextList.getString(0);
+        if ("READ-ONLY".equalsIgnoreCase(responseCode)) {
+            return Boolean.FALSE;
+        } else if ("READ-WRITE".equalsIgnoreCase(responseCode)) {
+            return Boolean.TRUE;
+        }
+
+        return null;
+    }
+
+    private static boolean isResponseValid(List<ImapResponse> imapResponses) {
+        ImapResponse lastResponse = ImapUtility.getLastResponse(imapResponses);
+        if (!lastResponse.isTagged() || !equalsIgnoreCase(lastResponse.get(0), Responses.OK)) {
+            return false;
+        }
+        return true;
+    }
+
+    private SelectOrExamineResponse(List<ImapResponse> imapResponses, ImapFolder folder) throws IOException,
+            MessagingException {
+        parse(imapResponses, folder);
     }
 
     private void parse(List<ImapResponse> imapResponses, ImapFolder folder) throws IOException, MessagingException {
@@ -44,7 +73,7 @@ class SelectOrExamineResponse {
             parsePermanentFlags(imapResponse, folder.getStore().getPermanentFlagsIndex());
         }
         this.readWriteMode = isModeReadWriteIfAvailable(ImapUtility.getLastResponse(imapResponses));
-        if (folder.supportsQresync()) {
+        if (folder.supportsQresync() && K9MailLib.shouldUseQresync()) {
             this.qresyncParamResponse = QresyncParamResponse.fromSelectOrExamineResponse(imapResponses, folder);
         } else {
             this.qresyncParamResponse = null;
@@ -74,34 +103,6 @@ class SelectOrExamineResponse {
 
         permanentFlags.addAll(permanentFlagsResponse.getFlags());
         this.canCreateKeywords = permanentFlagsResponse.canCreateKeywords();
-    }
-
-    private static Boolean isModeReadWriteIfAvailable(ImapResponse imapResponse) {
-        if (!imapResponse.isList(1)) {
-            return null;
-        }
-
-        ImapList responseTextList = imapResponse.getList(1);
-        if (!responseTextList.isString(0)) {
-            return null;
-        }
-
-        String responseCode = responseTextList.getString(0);
-        if ("READ-ONLY".equalsIgnoreCase(responseCode)) {
-            return Boolean.FALSE;
-        } else if ("READ-WRITE".equalsIgnoreCase(responseCode)) {
-            return Boolean.TRUE;
-        }
-
-        return null;
-    }
-
-    private static boolean isResponseValid(List<ImapResponse> imapResponses) {
-        ImapResponse lastResponse = ImapUtility.getLastResponse(imapResponses);
-        if (!lastResponse.isTagged() || !equalsIgnoreCase(lastResponse.get(0), Responses.OK)) {
-            return false;
-        }
-        return true;
     }
 
     long getUidValidity() {

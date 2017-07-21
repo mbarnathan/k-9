@@ -36,7 +36,7 @@ public class Settings {
      *
      * @see SettingsExporter
      */
-    public static final int VERSION = 47;
+    public static final int VERSION = 48;
 
     static Map<String, Object> validate(int version, Map<String, TreeMap<Integer, SettingsDescription>> settings,
             Map<String, String> importedSettings, boolean useDefaultValues) {
@@ -241,6 +241,25 @@ public class Settings {
     }
 
 
+    /**
+     * Used for a nontrivial settings upgrade.
+     *
+     * @see Settings#upgrade(int, Map, Map, Map)
+     */
+    interface SettingsUpgrader {
+        /**
+         * Upgrade the provided settings.
+         *
+         * @param settings
+         *         The settings to upgrade.  This map is modified and contains the upgraded
+         *         settings when this method returns.
+         *
+         * @return A set of setting names that were removed during the upgrade process or
+         *         {@code null} if none were removed.
+         */
+        Set<String> upgrade(Map<String, Object> settings);
+    }
+
     static class InvalidSettingValueException extends Exception {
         private static final long serialVersionUID = 1L;
     }
@@ -354,26 +373,6 @@ public class Settings {
             this.description = description;
         }
     }
-
-    /**
-     * Used for a nontrivial settings upgrade.
-     *
-     * @see Settings#upgrade(int, Map, Map, Map)
-     */
-    interface SettingsUpgrader {
-        /**
-         * Upgrade the provided settings.
-         *
-         * @param settings
-         *         The settings to upgrade.  This map is modified and contains the upgraded
-         *         settings when this method returns.
-         *
-         * @return A set of setting names that were removed during the upgrade process or
-         *         {@code null} if none were removed.
-         */
-        Set<String> upgrade(Map<String, Object> settings);
-    }
-
 
     static class StringSetting extends SettingsDescription<String> {
         StringSetting(String defaultValue) {

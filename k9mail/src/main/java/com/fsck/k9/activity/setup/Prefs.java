@@ -13,6 +13,7 @@ import android.os.Bundle;
 import android.preference.CheckBoxPreference;
 import android.preference.ListPreference;
 import android.preference.Preference;
+import android.preference.Preference.OnPreferenceChangeListener;
 import android.preference.Preference.OnPreferenceClickListener;
 import android.preference.PreferenceScreen;
 import android.text.TextUtils;
@@ -94,6 +95,8 @@ public class Prefs extends K9PreferenceActivity {
     private static final String PREFERENCE_BACKGROUND_OPS = "background_ops";
     private static final String PREFERENCE_DEBUG_LOGGING = "debug_logging";
     private static final String PREFERENCE_SENSITIVE_LOGGING = "sensitive_logging";
+    private static final String PREFERENCE_USE_CONDSTORE = "condstore_extension";
+    private static final String PREFERENCE_USE_QRESYNC = "qresync_extension";
 
     private static final String PREFERENCE_ATTACHMENT_DEF_PATH = "attachment_default_path";
     private static final String PREFERENCE_BACKGROUND_AS_UNREAD_INDICATOR = "messagelist_background_as_unread_indicator";
@@ -143,6 +146,8 @@ public class Prefs extends K9PreferenceActivity {
     private ListPreference mBackgroundOps;
     private CheckBoxPreference mDebugLogging;
     private CheckBoxPreference mSensitiveLogging;
+    private CheckBoxPreference useCondstore;
+    private CheckBoxPreference useQresync;
     private CheckBoxPreference mHideUserAgent;
     private CheckBoxPreference mHideTimeZone;
     private CheckBoxPreference mWrapFolderNames;
@@ -167,6 +172,24 @@ public class Prefs extends K9PreferenceActivity {
     public static void actionPrefs(Context context) {
         Intent i = new Intent(context, Prefs.class);
         context.startActivity(i);
+    }
+
+    private static String themeIdToName(K9.Theme theme) {
+        switch (theme) {
+            case DARK: return "dark";
+            case USE_GLOBAL: return "global";
+            default: return "light";
+        }
+    }
+
+    private static K9.Theme themeNameToId(String theme) {
+        if (TextUtils.equals(theme, "dark")) {
+            return K9.Theme.DARK;
+        } else if (TextUtils.equals(theme, "global")) {
+            return K9.Theme.USE_GLOBAL;
+        } else {
+            return K9.Theme.LIGHT;
+        }
     }
 
     @Override
@@ -354,11 +377,33 @@ public class Prefs extends K9PreferenceActivity {
 
         mDebugLogging = (CheckBoxPreference)findPreference(PREFERENCE_DEBUG_LOGGING);
         mSensitiveLogging = (CheckBoxPreference)findPreference(PREFERENCE_SENSITIVE_LOGGING);
+        useCondstore = (CheckBoxPreference) findPreference(PREFERENCE_USE_CONDSTORE);
+        useQresync = (CheckBoxPreference) findPreference(PREFERENCE_USE_QRESYNC);
         mHideUserAgent = (CheckBoxPreference)findPreference(PREFERENCE_HIDE_USERAGENT);
         mHideTimeZone = (CheckBoxPreference)findPreference(PREFERENCE_HIDE_TIMEZONE);
 
         mDebugLogging.setChecked(K9.isDebug());
         mSensitiveLogging.setChecked(K9.DEBUG_SENSITIVE);
+        useCondstore.setChecked(K9.shouldUseCondstore());
+        useCondstore.setOnPreferenceChangeListener(new OnPreferenceChangeListener() {
+            @Override
+            public boolean onPreferenceChange(Preference preference, Object newValue) {
+                if (newValue instanceof Boolean && !(Boolean) newValue) {
+                    useQresync.setChecked(false);
+                }
+                return true;
+            }
+        });
+        useQresync.setChecked(K9.shouldUseQresync());
+        useQresync.setOnPreferenceChangeListener(new OnPreferenceChangeListener() {
+            @Override
+            public boolean onPreferenceChange(Preference preference, Object newValue) {
+                if (newValue instanceof Boolean && (Boolean) newValue) {
+                    useCondstore.setChecked(true);
+                }
+                return true;
+            }
+        });
         mHideUserAgent.setChecked(K9.hideUserAgent());
         mHideTimeZone.setChecked(K9.hideTimeZone());
 
@@ -388,17 +433,6 @@ public class Prefs extends K9PreferenceActivity {
         mAttachmentPathPreference.setSummary(K9.getAttachmentDefaultPath());
         mAttachmentPathPreference
         .setOnPreferenceClickListener(new OnPreferenceClickListener() {
-            @Override
-            public boolean onPreferenceClick(Preference preference) {
-                FileBrowserHelper
-                .getInstance()
-                .showFileBrowserActivity(Prefs.this,
-                                         new File(K9.getAttachmentDefaultPath()),
-                                         ACTIVITY_CHOOSE_FOLDER, callback);
-
-                return true;
-            }
-
             FileBrowserFailOverCallback callback = new FileBrowserFailOverCallback() {
 
                 @Override
@@ -412,6 +446,17 @@ public class Prefs extends K9PreferenceActivity {
                     // canceled, do nothing
                 }
             };
+
+            @Override
+            public boolean onPreferenceClick(Preference preference) {
+                FileBrowserHelper
+                .getInstance()
+                .showFileBrowserActivity(Prefs.this,
+                                         new File(K9.getAttachmentDefaultPath()),
+                                         ACTIVITY_CHOOSE_FOLDER, callback);
+
+                return true;
+            }
         });
 
         mWrapFolderNames = (CheckBoxPreference)findPreference(PREFERENCE_FOLDERLIST_WRAP_NAME);
@@ -438,24 +483,6 @@ public class Prefs extends K9PreferenceActivity {
         mSplitViewMode = (ListPreference) findPreference(PREFERENCE_SPLITVIEW_MODE);
         initListPreference(mSplitViewMode, K9.getSplitViewMode().name(),
                 mSplitViewMode.getEntries(), mSplitViewMode.getEntryValues());
-    }
-
-    private static String themeIdToName(K9.Theme theme) {
-        switch (theme) {
-            case DARK: return "dark";
-            case USE_GLOBAL: return "global";
-            default: return "light";
-        }
-    }
-
-    private static K9.Theme themeNameToId(String theme) {
-        if (TextUtils.equals(theme, "dark")) {
-            return K9.Theme.DARK;
-        } else if (TextUtils.equals(theme, "global")) {
-            return K9.Theme.USE_GLOBAL;
-        } else {
-            return K9.Theme.LIGHT;
-        }
     }
 
     private void saveSettings() {
@@ -534,6 +561,8 @@ public class Prefs extends K9PreferenceActivity {
         }
         K9.setDebug(mDebugLogging.isChecked());
         K9.DEBUG_SENSITIVE = mSensitiveLogging.isChecked();
+        K9.setUseCondstore(useCondstore.isChecked());
+        K9.setUseQresync(useQresync.isChecked());
         K9.setHideUserAgent(mHideUserAgent.isChecked());
         K9.setHideTimeZone(mHideTimeZone.isChecked());
 
