@@ -27,10 +27,40 @@ class ImapSyncInteractor {
 
     private final Account account;
     private final String folderName;
-    private LocalFolder localFolder;
-    private ImapFolder imapFolder;
     private final  MessagingListener listener;
     private final  MessagingController controller;
+    private LocalFolder localFolder;
+    private ImapFolder imapFolder;
+
+    static int getRemoteStart(LocalFolder localFolder, ImapFolder imapFolder) throws MessagingException {
+        int remoteMessageCount = imapFolder.getMessageCount();
+
+        int visibleLimit = localFolder.getVisibleLimit();
+        if (visibleLimit < 0) {
+            visibleLimit = K9.DEFAULT_VISIBLE_LIMIT;
+        }
+
+        int remoteStart;
+        /* Message numbers start at 1.  */
+        if (visibleLimit > 0) {
+            remoteStart = Math.max(0, remoteMessageCount - visibleLimit) + 1;
+        } else {
+            remoteStart = 1;
+        }
+        return remoteStart;
+    }
+
+    private static void updateHighestModSeqIfNecessary(final LocalFolder localFolder, final Folder remoteFolder)
+            throws MessagingException {
+        if (remoteFolder instanceof ImapFolder) {
+            ImapFolder imapFolder = (ImapFolder) remoteFolder;
+            long cachedHighestModSeq = localFolder.getHighestModSeq();
+            long remoteHighestModSeq = imapFolder.getHighestModSeq();
+            if (remoteHighestModSeq > cachedHighestModSeq) {
+                localFolder.setHighestModSeq(remoteHighestModSeq);
+            }
+        }
+    }
 
     ImapSyncInteractor(Account account, String folderName, MessagingListener listener, MessagingController controller) {
         this.account = account;
@@ -39,7 +69,7 @@ class ImapSyncInteractor {
         this.controller = controller;
     }
 
-    void performSync(MessageDownloader messageDownloader) {
+    void performSync(FlagSyncHelper flagSyncHelper, MessageDownloader messageDownloader) {
         Exception commandException = null;
 
         try {
@@ -97,12 +127,12 @@ class ImapSyncInteractor {
             if (!qresyncEnabled) {
                 NonQresyncExtensionHandler handler = new NonQresyncExtensionHandler(account, localFolder, imapFolder,
                         listener, controller, this);
-                newMessages = handler.continueSync(messageDownloader);
+                newMessages = handler.continueSync(messageDownloader, flagSyncHelper);
             } else {
                 Timber.v("SYNC: QRESYNC extension found and enabled for folder %s", folderName);
                 QresyncExtensionHandler handler = new QresyncExtensionHandler(account, localFolder, imapFolder,
                         listener, controller, this);
-                newMessages = handler.continueSync(qresyncParamResponse, expungedUids, messageDownloader);
+                newMessages = handler.continueSync(qresyncParamResponse, expungedUids, messageDownloader, flagSyncHelper);
             }
 
             localFolder.setUidValidity(imapFolder.getUidValidity());
@@ -189,36 +219,6 @@ class ImapSyncInteractor {
                 }
             }
             localFolder.setHighestModSeq(0);
-        }
-    }
-
-    static int getRemoteStart(LocalFolder localFolder, ImapFolder imapFolder) throws MessagingException {
-        int remoteMessageCount = imapFolder.getMessageCount();
-
-        int visibleLimit = localFolder.getVisibleLimit();
-        if (visibleLimit < 0) {
-            visibleLimit = K9.DEFAULT_VISIBLE_LIMIT;
-        }
-
-        int remoteStart;
-        /* Message numbers start at 1.  */
-        if (visibleLimit > 0) {
-            remoteStart = Math.max(0, remoteMessageCount - visibleLimit) + 1;
-        } else {
-            remoteStart = 1;
-        }
-        return remoteStart;
-    }
-
-    static void updateHighestModSeqIfNecessary(final LocalFolder localFolder, final Folder remoteFolder)
-            throws MessagingException {
-        if (remoteFolder instanceof ImapFolder) {
-            ImapFolder imapFolder = (ImapFolder) remoteFolder;
-            long cachedHighestModSeq = localFolder.getHighestModSeq();
-            long remoteHighestModSeq = imapFolder.getHighestModSeq();
-            if (remoteHighestModSeq > cachedHighestModSeq) {
-                localFolder.setHighestModSeq(remoteHighestModSeq);
-            }
         }
     }
 

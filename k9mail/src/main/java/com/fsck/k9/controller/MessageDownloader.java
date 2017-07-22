@@ -5,7 +5,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
 import java.util.EnumSet;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -16,7 +15,6 @@ import com.fsck.k9.Account;
 import com.fsck.k9.AccountStats;
 import com.fsck.k9.K9;
 import com.fsck.k9.Preferences;
-import com.fsck.k9.activity.MessageReference;
 import com.fsck.k9.helper.Contacts;
 import com.fsck.k9.mail.BodyFactory;
 import com.fsck.k9.mail.DefaultBodyFactory;
@@ -70,19 +68,19 @@ class MessageDownloader {
      * @param localFolder
      *         The {@link LocalFolder} instance corresponding to the remote folder.
      * @param inputMessages
-     *         A list of messages objects that store the UIDs of which messages to download.
-     * @param flagSyncOnly
-     *         Only flags will be fetched from the remote store if this is {@code true}.
+     *         A list of message objects that store the UIDs of which messages to download.
      * @param purgeToVisibleLimit
      *         If true, local messages will be purged down to the limit of visible messages.
+     * @param downloadFlags
+     *         If true, flags will be downloaded.
      *
      * @return The number of downloaded messages that are not flagged as {@link Flag#SEEN}.
      *
      * @throws MessagingException
      */
     int downloadMessages(final Account account, final Folder remoteFolder, final LocalFolder localFolder,
-            List<? extends Message> inputMessages, boolean flagSyncOnly, boolean purgeToVisibleLimit,
-            boolean downloadFlags) throws MessagingException {
+            List<? extends Message> inputMessages, boolean purgeToVisibleLimit, boolean downloadFlags)
+            throws MessagingException {
 
         final Date earliestDate = account.getEarliestPollDate();
         Date downloadStarted = new Date(); // now
@@ -90,7 +88,7 @@ class MessageDownloader {
         if (earliestDate != null) {
             Timber.d("Only syncing messages after %s", earliestDate);
         }
-        final String folder = remoteFolder.getName();
+        final String folderName = remoteFolder.getName();
 
         int unreadBeforeStart = 0;
         try {
@@ -101,40 +99,30 @@ class MessageDownloader {
             Timber.e(e, "Unable to getUnreadMessageCount for account: %s", account);
         }
 
-        List<Message> syncFlagMessages = new ArrayList<>();
-        List<Message> unsyncedMessages = new ArrayList<>();
         final AtomicInteger newMessages = new AtomicInteger(0);
 
-        List<Message> messages = new ArrayList<>(inputMessages);
-
-        for (Message message : messages) {
-            evaluateMessageForDownload(message, folder, localFolder, remoteFolder, account, unsyncedMessages,
-                    syncFlagMessages, flagSyncOnly);
-        }
-
         final AtomicInteger progress = new AtomicInteger(0);
-        final int todo = unsyncedMessages.size() + syncFlagMessages.size();
+        final int todo = inputMessages.size();
         for (MessagingListener l : controller.getListeners()) {
-            l.synchronizeMailboxProgress(account, folder, progress.get(), todo);
+            l.synchronizeMailboxProgress(account, folderName, progress.get(), todo);
         }
 
-        Timber.d("SYNC: Have %d unsynced messages", unsyncedMessages.size());
+        Timber.d("SYNC: Have %d unsynced messages", inputMessages.size());
 
-        messages.clear();
         final List<Message> largeMessages = new ArrayList<>();
         final List<Message> smallMessages = new ArrayList<>();
-        if (!unsyncedMessages.isEmpty()) {
+        if (!inputMessages.isEmpty()) {
 
             /*
              * Reverse the order of the messages. Depending on the server this may get us
              * fetch results for newest to oldest. If not, no harm done.
              */
-            Collections.sort(unsyncedMessages, new UidReverseComparator());
+            Collections.sort(inputMessages, new UidReverseComparator());
             int visibleLimit = localFolder.getVisibleLimit();
-            int listSize = unsyncedMessages.size();
+            int listSize = inputMessages.size();
 
             if ((visibleLimit > 0) && (listSize > visibleLimit)) {
-                unsyncedMessages = unsyncedMessages.subList(0, visibleLimit);
+                inputMessages = inputMessages.subList(0, visibleLimit);
             }
 
             FetchProfile fp = new FetchProfile();
@@ -143,13 +131,13 @@ class MessageDownloader {
             }
             fp.add(FetchProfile.Item.ENVELOPE);
 
-            Timber.d("SYNC: About to fetch %d unsynced messages for folder %s", unsyncedMessages.size(), folder);
+            Timber.d("SYNC: About to fetch %d unsynced messages for folder %s", inputMessages.size(), folderName);
 
-            fetchUnsyncedMessages(account, remoteFolder, unsyncedMessages, smallMessages, largeMessages, progress, todo,
+            fetchUnsyncedMessages(account, remoteFolder, inputMessages, smallMessages, largeMessages, progress, todo,
                     fp);
 
             String updatedPushState = localFolder.getPushState();
-            for (Message message : unsyncedMessages) {
+            for (Message message : inputMessages) {
                 String newPushState = remoteFolder.getNewPushState(updatedPushState, message);
                 if (newPushState != null) {
                     updatedPushState = newPushState;
@@ -157,13 +145,13 @@ class MessageDownloader {
             }
             localFolder.setPushState(updatedPushState);
 
-            Timber.d("SYNC: Synced unsynced messages for folder %s", folder);
+            Timber.d("SYNC: Synced unsynced messages for folder %s", folderName);
         }
 
         Timber.d("SYNC: Have %d large messages and %d small messages out of %d unsynced messages",
-                largeMessages.size(), smallMessages.size(), unsyncedMessages.size());
+                largeMessages.size(), smallMessages.size(), inputMessages.size());
 
-        unsyncedMessages.clear();
+        inputMessages.clear();
         /*
          * Grab the content of the small messages first. This is going to
          * be very fast and at very worst will be a single up of a few bytes and a single
@@ -186,21 +174,14 @@ class MessageDownloader {
                 newMessages, todo, fp);
         largeMessages.clear();
 
-        /*
-         * Refresh the flags for any messages in the local store that we didn't just
-         * download.
-         */
-
-        refreshLocalMessageFlags(account, remoteFolder, localFolder, syncFlagMessages, progress, todo);
-
-        Timber.d("SYNC: Synced remote messages for folder %s, %d new messages", folder, newMessages.get());
+        Timber.d("SYNC: Synced remote messages for folder %s, %d new messages", folderName, newMessages.get());
 
         if (purgeToVisibleLimit) {
             localFolder.purgeToVisibleLimit(new MessageRemovalListener() {
                 @Override
                 public void messageRemoved(Message message) {
                     for (MessagingListener l : controller.getListeners()) {
-                        l.synchronizeMailboxRemovedMessage(account, folder, message);
+                        l.synchronizeMailboxRemovedMessage(account, folderName, message);
                     }
                 }
 
@@ -225,65 +206,6 @@ class MessageDownloader {
 
         }
         return newMessages.get();
-    }
-
-    private void evaluateMessageForDownload(final Message message, final String folder,
-            final LocalFolder localFolder,
-            final Folder remoteFolder,
-            final Account account,
-            final List<Message> unsyncedMessages,
-            final List<Message> syncFlagMessages,
-            boolean flagSyncOnly) throws MessagingException {
-        if (message.isSet(Flag.DELETED)) {
-            Timber.v("Message with uid %s is marked as deleted", message.getUid());
-
-            syncFlagMessages.add(message);
-            return;
-        }
-
-        Message localMessage = localFolder.getMessage(message.getUid());
-
-        if (localMessage == null) {
-            if (!flagSyncOnly) {
-                if (!message.isSet(Flag.X_DOWNLOADED_FULL) && !message.isSet(Flag.X_DOWNLOADED_PARTIAL)) {
-                    Timber.v("Message with uid %s has not yet been downloaded", message.getUid());
-
-                    unsyncedMessages.add(message);
-                } else {
-                    Timber.v("Message with uid %s is partially or fully downloaded", message.getUid());
-
-                    // Store the updated message locally
-                    localFolder.appendMessages(Collections.singletonList(message));
-
-                    localMessage = localFolder.getMessage(message.getUid());
-
-                    localMessage.setFlag(Flag.X_DOWNLOADED_FULL, message.isSet(Flag.X_DOWNLOADED_FULL));
-                    localMessage.setFlag(Flag.X_DOWNLOADED_PARTIAL, message.isSet(Flag.X_DOWNLOADED_PARTIAL));
-
-                    for (MessagingListener l : controller.getListeners()) {
-                        if (!localMessage.isSet(Flag.SEEN)) {
-                            l.synchronizeMailboxNewMessage(account, folder, localMessage);
-                        }
-                    }
-                }
-            }
-        } else if (!localMessage.isSet(Flag.DELETED)) {
-            Timber.v("Message with uid %s is present in the local store", message.getUid());
-
-            if (!localMessage.isSet(Flag.X_DOWNLOADED_FULL) && !localMessage.isSet(Flag.X_DOWNLOADED_PARTIAL)) {
-                Timber.v("Message with uid %s is not downloaded, even partially; trying again", message.getUid());
-
-                unsyncedMessages.add(message);
-            } else {
-                String newPushState = remoteFolder.getNewPushState(localFolder.getPushState(), message);
-                if (newPushState != null) {
-                    localFolder.setPushState(newPushState);
-                }
-                syncFlagMessages.add(message);
-            }
-        } else {
-            Timber.v("Local copy of message with uid %s is marked as deleted", message.getUid());
-        }
     }
 
     private <T extends Message> void fetchUnsyncedMessages(final Account account, final Folder<T> remoteFolder,
@@ -405,7 +327,7 @@ class MessageDownloader {
                             }
                             // Send a notification of this message
 
-                            if (shouldNotifyForMessage(account, localFolder, message)) {
+                            if (SyncUtils.shouldNotifyForMessage(account, localFolder, message, contacts)) {
                                 // Notify with the localMessage so that we don't have to recalculate the content preview.
                                 notificationController.addNewMailNotification(account, localMessage, unreadBeforeStart);
                             }
@@ -474,7 +396,7 @@ class MessageDownloader {
                 }
             }
             // Send a notification of this message
-            if (shouldNotifyForMessage(account, localFolder, message)) {
+            if (SyncUtils.shouldNotifyForMessage(account, localFolder, message, contacts)) {
                 // Notify with the localMessage so that we don't have to recalculate the content preview.
                 notificationController.addNewMailNotification(account, localMessage, unreadBeforeStart);
             }
@@ -554,158 +476,5 @@ class MessageDownloader {
             }
         }
 
-    }
-
-    private void refreshLocalMessageFlags(final Account account, final Folder remoteFolder,
-            final LocalFolder localFolder,
-            List<Message> syncFlagMessages,
-            final AtomicInteger progress,
-            final int todo
-    ) throws MessagingException {
-
-        final String folderName = remoteFolder.getName();
-        if (remoteFolder.supportsFetchingFlags()) {
-            Timber.d("SYNC: About to sync flags for %d remote messages for folder %s", syncFlagMessages.size(), folderName);
-
-            FetchProfile fp = new FetchProfile();
-            fp.add(FetchProfile.Item.FLAGS);
-
-            List<Message> undeletedMessages = new LinkedList<>();
-            for (Message message : syncFlagMessages) {
-                if (!message.isSet(Flag.DELETED)) {
-                    undeletedMessages.add(message);
-                }
-            }
-
-            remoteFolder.fetch(undeletedMessages, fp, null);
-            for (Message remoteMessage : syncFlagMessages) {
-                processDownloadedFlags(account, localFolder, remoteMessage);
-                progress.incrementAndGet();
-                for (MessagingListener l : controller.getListeners()) {
-                    l.synchronizeMailboxProgress(account, folderName, progress.get(), todo);
-                }
-            }
-        }
-    }
-
-    void processDownloadedFlags(Account account, LocalFolder localFolder, Message remoteMessage)
-            throws MessagingException {
-        String folderName = localFolder.getName();
-        LocalMessage localMessage = localFolder.getMessage(remoteMessage.getUid());
-        boolean messageChanged = syncFlags(localMessage, remoteMessage);
-        if (messageChanged) {
-            boolean shouldBeNotifiedOf = false;
-            if (localMessage.isSet(Flag.DELETED) || SyncUtils.isMessageSuppressed(localMessage, context)) {
-                for (MessagingListener l : controller.getListeners()) {
-                    l.synchronizeMailboxRemovedMessage(account, folderName, localMessage);
-                }
-            } else {
-                if (shouldNotifyForMessage(account, localFolder, localMessage)) {
-                    shouldBeNotifiedOf = true;
-                }
-            }
-
-            // we're only interested in messages that need removing
-            if (!shouldBeNotifiedOf) {
-                MessageReference messageReference = localMessage.makeMessageReference();
-                notificationController.removeNewMailNotification(account, messageReference);
-            }
-        }
-    }
-
-    private boolean syncFlags(LocalMessage localMessage, Message remoteMessage) throws MessagingException {
-        boolean messageChanged = false;
-        if (localMessage == null || localMessage.isSet(Flag.DELETED)) {
-            return false;
-        }
-        if (remoteMessage.isSet(Flag.DELETED)) {
-            if (localMessage.getFolder().syncRemoteDeletions()) {
-                localMessage.setFlag(Flag.DELETED, true);
-                messageChanged = true;
-            }
-        } else {
-            for (Flag flag : SYNC_FLAGS) {
-                if (remoteMessage.isSet(flag) != localMessage.isSet(flag)) {
-                    localMessage.setFlag(flag, remoteMessage.isSet(flag));
-                    messageChanged = true;
-                }
-            }
-        }
-        return messageChanged;
-    }
-
-    private boolean shouldNotifyForMessage(Account account, LocalFolder localFolder, Message message) {
-        // If we don't even have an account name, don't show the notification.
-        // (This happens during initial account setup)
-        if (account.getName() == null) {
-            return false;
-        }
-
-        // Do not notify if the user does not have notifications enabled or if the message has
-        // been read.
-        if (!account.isNotifyNewMail() || message.isSet(Flag.SEEN)) {
-            return false;
-        }
-
-        Account.FolderMode aDisplayMode = account.getFolderDisplayMode();
-        Account.FolderMode aNotifyMode = account.getFolderNotifyNewMailMode();
-        Folder.FolderClass fDisplayClass = localFolder.getDisplayClass();
-        Folder.FolderClass fNotifyClass = localFolder.getNotifyClass();
-
-        if (SyncUtils.modeMismatch(aDisplayMode, fDisplayClass)) {
-            // Never notify a folder that isn't displayed
-            return false;
-        }
-
-        if (SyncUtils.modeMismatch(aNotifyMode, fNotifyClass)) {
-            // Do not notify folders in the wrong class
-            return false;
-        }
-
-        // If the account is a POP3 account and the message is older than the oldest message we've
-        // previously seen, then don't notify about it.
-        if (account.getStoreUri().startsWith("pop3") &&
-                message.olderThan(new Date(account.getLatestOldMessageSeenTime()))) {
-            return false;
-        }
-
-        // No notification for new messages in Trash, Drafts, Spam or Sent folder.
-        // But do notify if it's the INBOX (see issue 1817).
-        Folder folder = message.getFolder();
-        if (folder != null) {
-            String folderName = folder.getName();
-            if (!account.getInboxFolderName().equals(folderName) &&
-                    (account.getTrashFolderName().equals(folderName)
-                            || account.getDraftsFolderName().equals(folderName)
-                            || account.getSpamFolderName().equals(folderName)
-                            || account.getSentFolderName().equals(folderName))) {
-                return false;
-            }
-        }
-
-        if (message.getUid() != null && localFolder.getLastUid() != null) {
-            try {
-                Integer messageUid = Integer.parseInt(message.getUid());
-                if (messageUid <= localFolder.getLastUid()) {
-                    Timber.d("Message uid is %s, max message uid is %s. Skipping notification.",
-                            messageUid, localFolder.getLastUid());
-                    return false;
-                }
-            } catch (NumberFormatException e) {
-                // Nothing to be done here.
-            }
-        }
-
-        // Don't notify if the sender address matches one of our identities and the user chose not
-        // to be notified for such messages.
-        if (account.isAnIdentity(message.getFrom()) && !account.isNotifySelfNewMail()) {
-            return false;
-        }
-
-        if (account.isNotifyContactsMailOnly() && !contacts.isAnyInContacts(message.getFrom())) {
-            return false;
-        }
-
-        return true;
     }
 }

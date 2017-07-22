@@ -29,7 +29,7 @@ accounts only
 class LegacySyncInteractor {
 
     static void performSync(Account account, String folderName, MessagingListener listener,
-            MessagingController controller, MessageDownloader messageDownloader) {
+            MessagingController controller, FlagSyncHelper flagSyncHelper, MessageDownloader messageDownloader) {
 
         Exception commandException = null;
         LocalFolder localFolder = null;
@@ -124,11 +124,21 @@ class LegacySyncInteractor {
                 updateMoreMessages(remoteFolder, localFolder, earliestDate, remoteStart);
             }
 
+            List<Message> unsyncedMessages = new ArrayList<>();
+            List<Message> syncFlagMessages = new ArrayList<>();
+
+            for (Message message : remoteMessages) {
+                SyncUtils.evaluateMessageForDownload(message, folderName, localFolder, remoteFolder, account,
+                        unsyncedMessages, syncFlagMessages, false, controller);
+            }
+
+            flagSyncHelper.refreshLocalMessageFlags(account, remoteFolder, localFolder, syncFlagMessages);
+
             /*
              * Now we download the actual content of messages.
              */
-            int newMessages =  messageDownloader.downloadMessages(account, remoteFolder, localFolder, remoteMessages,
-                    false, true, true);
+            int newMessages =  messageDownloader.downloadMessages(account, remoteFolder, localFolder, unsyncedMessages,
+                    true, true);
             int unreadMessageCount = localFolder.getUnreadMessageCount();
             for (MessagingListener l : controller.getListeners()) {
                 l.folderStatusChanged(account, folderName, unreadMessageCount);

@@ -124,14 +124,14 @@ public class MessagingController {
     public static final long INVALID_MESSAGE_ID = -1;
 
     private static MessagingController inst = null;
-
+    private static AtomicBoolean loopCatch = new AtomicBoolean();
+    private static AtomicInteger sequencing = new AtomicInteger(0);
     private final Context context;
     private final Contacts contacts;
     private final NotificationController notificationController;
+    private final FlagSyncHelper flagSyncHelper;
     private final MessageDownloader messageDownloader;
-
     private final Thread controllerThread;
-
     private final BlockingQueue<Command> queuedCommands = new PriorityBlockingQueue<>();
     private final Set<MessagingListener> listeners = new CopyOnWriteArraySet<>();
     private final ConcurrentHashMap<String, AtomicInteger> sendCount = new ConcurrentHashMap<>();
@@ -139,11 +139,8 @@ public class MessagingController {
     private final ExecutorService threadPool = Executors.newCachedThreadPool();
     private final MemorizingMessagingListener memorizingMessagingListener = new MemorizingMessagingListener();
     private final TransportProvider transportProvider;
-
-
     private MessagingListener checkMailListener = null;
     private volatile boolean stopped = false;
-
 
     public static synchronized MessagingController getInstance(Context context) {
         if (inst == null) {
@@ -156,6 +153,58 @@ public class MessagingController {
         return inst;
     }
 
+    static void closeFolder(Folder f) {
+        if (f != null) {
+            f.close();
+        }
+    }
+
+    static String getRootCauseMessage(Throwable t) {
+        Throwable rootCause = t;
+        Throwable nextCause;
+        do {
+            nextCause = rootCause.getCause();
+            if (nextCause != null) {
+                rootCause = nextCause;
+            }
+        } while (nextCause != null);
+        if (rootCause instanceof MessagingException) {
+            return rootCause.getMessage();
+        } else {
+            // Remove the namespace on the exception so we have a fighting chance of seeing more of the error in the
+            // notification.
+            return (rootCause.getLocalizedMessage() != null)
+                    ? (rootCause.getClass().getSimpleName() + ": " + rootCause.getLocalizedMessage())
+                    : rootCause.getClass().getSimpleName();
+        }
+    }
+
+    private static List<Message> collectMessagesInThreads(Account account, List<? extends Message> messages)
+            throws MessagingException {
+
+        LocalStore localStore = account.getLocalStore();
+
+        List<Message> messagesInThreads = new ArrayList<>();
+        for (Message message : messages) {
+            LocalMessage localMessage = (LocalMessage) message;
+            long rootId = localMessage.getRootId();
+            long threadId = (rootId == -1) ? localMessage.getThreadId() : rootId;
+
+            List<? extends Message> messagesInThread = localStore.getMessagesInThread(threadId);
+
+            messagesInThreads.addAll(messagesInThread);
+        }
+
+        return messagesInThreads;
+    }
+
+    private static List<String> getUidsFromMessages(List<? extends Message> messages) {
+        List<String> uids = new ArrayList<>(messages.size());
+        for (int i = 0; i < messages.size(); i++) {
+            uids.add(messages.get(i).getUid());
+        }
+        return uids;
+    }
 
     @VisibleForTesting
     MessagingController(Context context, NotificationController notificationController,
@@ -164,6 +213,7 @@ public class MessagingController {
         this.notificationController = notificationController;
         this.contacts = contacts;
         this.transportProvider = transportProvider;
+        flagSyncHelper = FlagSyncHelper.newInstance(context, this);
         messageDownloader = MessageDownloader.newInstance(context, this);
 
         controllerThread = new Thread(new Runnable() {
@@ -273,7 +323,6 @@ public class MessagingController {
         return listeners;
     }
 
-
     public Set<MessagingListener> getListeners(MessagingListener listener) {
         if (listener == null) {
             return listeners;
@@ -284,7 +333,6 @@ public class MessagingController {
         return listeners;
 
     }
-
 
     private void suppressMessages(Account account, List<LocalMessage> messages) {
         EmailProviderCache cache = EmailProviderCache.getCache(account.getUuid(), context);
@@ -329,7 +377,6 @@ public class MessagingController {
         String columnName = LocalStore.getColumnNameForFlag(flag);
         cache.removeValueForThreads(messageIds, columnName);
     }
-
 
     /**
      * Lists folders that are available locally and remotely. This method calls
@@ -678,7 +725,6 @@ public class MessagingController {
         }
     }
 
-
     public void loadMoreMessages(Account account, String folder, MessagingListener listener) {
         try {
             LocalStore localStore = account.getLocalStore();
@@ -752,40 +798,14 @@ public class MessagingController {
         String storeUri = account.getStoreUri();
         if (ImapStore.isStoreUriImap(storeUri)) {
             ImapSyncInteractor syncInteractor = new ImapSyncInteractor(account, folderName, listener, this);
-            syncInteractor.performSync(messageDownloader);
+            syncInteractor.performSync(flagSyncHelper, messageDownloader);
         } else {
-            LegacySyncInteractor.performSync(account, folderName, listener, this, messageDownloader);
+            LegacySyncInteractor.performSync(account, folderName, listener, this, flagSyncHelper, messageDownloader);
         }
     }
 
     void handleAuthenticationFailure(Account account, boolean incoming) {
         notificationController.showAuthenticationErrorNotification(account, incoming);
-    }
-
-    static void closeFolder(Folder f) {
-        if (f != null) {
-            f.close();
-        }
-    }
-
-    static String getRootCauseMessage(Throwable t) {
-        Throwable rootCause = t;
-        Throwable nextCause;
-        do {
-            nextCause = rootCause.getCause();
-            if (nextCause != null) {
-                rootCause = nextCause;
-            }
-        } while (nextCause != null);
-        if (rootCause instanceof MessagingException) {
-            return rootCause.getMessage();
-        } else {
-            // Remove the namespace on the exception so we have a fighting chance of seeing more of the error in the
-            // notification.
-            return (rootCause.getLocalizedMessage() != null)
-                    ? (rootCause.getClass().getSimpleName() + ": " + rootCause.getLocalizedMessage())
-                    : rootCause.getClass().getSimpleName();
-        }
     }
 
     private void queuePendingCommand(Account account, PendingCommand command) {
@@ -1297,8 +1317,6 @@ public class MessagingController {
         }
     }
 
-    private static AtomicBoolean loopCatch = new AtomicBoolean();
-
     private void addErrorMessage(Account account, String subject, String body) {
         if (!K9.isDebug()) {
             return;
@@ -1335,7 +1353,6 @@ public class MessagingController {
             loopCatch.set(false);
         }
     }
-
 
     public void markAllMessagesRead(final Account account, final String folder) {
         Timber.i("Marking all messages in %s:%s as read", account.getDescription(), folder);
@@ -1616,7 +1633,7 @@ public class MessagingController {
 
                 if (loadPartialFromSearch) {
                     messageDownloader.downloadMessages(account, remoteFolder, localFolder,
-                            Collections.singletonList(remoteMessage), false, false, true);
+                            Collections.singletonList(remoteMessage), false, true);
                 } else {
                     FetchProfile fp = new FetchProfile();
                     fp.add(FetchProfile.Item.BODY);
@@ -1767,14 +1784,12 @@ public class MessagingController {
         }
     }
 
-
     public void sendPendingMessages(MessagingListener listener) {
         final Preferences prefs = Preferences.getPreferences(context);
         for (Account account : prefs.getAvailableAccounts()) {
             sendPendingMessages(account, listener);
         }
     }
-
 
     /**
      * Attempt to send any messages that are sitting in the Outbox.
@@ -2144,7 +2159,6 @@ public class MessagingController {
         put("getFolderUnread:" + account.getDescription() + ":" + folderName, l, unreadRunnable);
     }
 
-
     public boolean isMoveCapable(MessageReference messageReference) {
         return !messageReference.getUid().startsWith(K9.LOCAL_UID_PREFIX);
     }
@@ -2413,25 +2427,6 @@ public class MessagingController {
         }
     }
 
-    private static List<Message> collectMessagesInThreads(Account account, List<? extends Message> messages)
-            throws MessagingException {
-
-        LocalStore localStore = account.getLocalStore();
-
-        List<Message> messagesInThreads = new ArrayList<>();
-        for (Message message : messages) {
-            LocalMessage localMessage = (LocalMessage) message;
-            long rootId = localMessage.getRootId();
-            long threadId = (rootId == -1) ? localMessage.getThreadId() : rootId;
-
-            List<? extends Message> messagesInThread = localStore.getMessagesInThread(threadId);
-
-            messagesInThreads.addAll(messagesInThread);
-        }
-
-        return messagesInThreads;
-    }
-
     public void deleteMessage(MessageReference message, final MessagingListener listener) {
         deleteMessages(Collections.singletonList(message), listener);
     }
@@ -2564,14 +2559,6 @@ public class MessagingController {
         }
     }
 
-    private static List<String> getUidsFromMessages(List<? extends Message> messages) {
-        List<String> uids = new ArrayList<>(messages.size());
-        for (int i = 0; i < messages.size(); i++) {
-            uids.add(messages.get(i).getUid());
-        }
-        return uids;
-    }
-
     void processPendingEmptyTrash(Account account) throws MessagingException {
         Store remoteStore = account.getRemoteStore();
 
@@ -2663,7 +2650,6 @@ public class MessagingController {
 
         listFoldersSynchronous(account, false, listener);
     }
-
 
     /**
      * Find out whether the account type only supports a local Trash folder.
@@ -2794,7 +2780,6 @@ public class MessagingController {
         });
     }
 
-
     private void checkMailForAccount(final Context context, final Account account,
             final boolean ignoreLastCheckedTime,
             final MessagingListener listener) {
@@ -2876,7 +2861,6 @@ public class MessagingController {
 
     }
 
-
     private void synchronizeFolder(
             final Account account,
             final Folder folder,
@@ -2941,7 +2925,6 @@ public class MessagingController {
             notificationController.clearFetchingMailNotification(account);
         }
     }
-
 
     public void compact(final Account account, final MessagingListener ml) {
         putBackground("compact:" + account.getDescription(), ml, new Runnable() {
@@ -3077,28 +3060,6 @@ public class MessagingController {
         }
 
         return id;
-    }
-
-    private static AtomicInteger sequencing = new AtomicInteger(0);
-
-    private static class Command implements Comparable<Command> {
-        public Runnable runnable;
-        public MessagingListener listener;
-        public String description;
-        boolean isForegroundPriority;
-
-        int sequence = sequencing.getAndIncrement();
-
-        @Override
-        public int compareTo(@NonNull Command other) {
-            if (other.isForegroundPriority && !isForegroundPriority) {
-                return 1;
-            } else if (!other.isForegroundPriority && isForegroundPriority) {
-                return -1;
-            } else {
-                return (sequence - other.sequence);
-            }
-        }
     }
 
     public MessagingListener getCheckMailListener() {
@@ -3321,5 +3282,25 @@ public class MessagingController {
 
     private interface MessageActor {
         void act(Account account, LocalFolder messageFolder, List<LocalMessage> messages);
+    }
+
+    private static class Command implements Comparable<Command> {
+        public Runnable runnable;
+        public MessagingListener listener;
+        public String description;
+        boolean isForegroundPriority;
+
+        int sequence = sequencing.getAndIncrement();
+
+        @Override
+        public int compareTo(@NonNull Command other) {
+            if (other.isForegroundPriority && !isForegroundPriority) {
+                return 1;
+            } else if (!other.isForegroundPriority && isForegroundPriority) {
+                return -1;
+            } else {
+                return (sequence - other.sequence);
+            }
+        }
     }
 }
