@@ -217,7 +217,7 @@ public class ServerSettings {
     }
 
     public ServerSettings newClientCertificateAlias(String newAlias) {
-        return new ServerSettings(type, host, port, connectionSecurity, AuthType.EXTERNAL,
+        return new ServerSettings(type, host, port, connectionSecurity, authenticationType,
                 username, password, newAlias);
     }
 }

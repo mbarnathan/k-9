@@ -343,8 +343,8 @@ public class AccountSetupOutgoing extends K9Activity implements OnClickListener,
             // show password fields, hide client certificate fields
             mPasswordView.setVisibility(View.VISIBLE);
             mPasswordLabelView.setVisibility(View.VISIBLE);
-            mClientCertificateLabelView.setVisibility(View.GONE);
-            mClientCertificateSpinner.setVisibility(View.GONE);
+            mClientCertificateLabelView.setVisibility(View.VISIBLE);
+            mClientCertificateSpinner.setVisibility(View.VISIBLE);
         }
     }
 
@@ -457,9 +457,8 @@ public class AccountSetupOutgoing extends K9Activity implements OnClickListener,
             username = mUsernameView.getText().toString();
 
             authType = getSelectedAuthType();
-            if (AuthType.EXTERNAL == authType) {
-                clientCertificateAlias = mClientCertificateSpinner.getAlias();
-            } else {
+            clientCertificateAlias = mClientCertificateSpinner.getAlias();
+            if (AuthType.EXTERNAL != authType) {
                 password = mPasswordView.getText().toString();
             }
         }

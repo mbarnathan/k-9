@@ -139,6 +139,12 @@ public class SmtpTransport extends Transport {
                 } else {
                     password = decodeUtf8(userInfoParts[1]);
                 }
+            } else if (userInfoParts.length == 4) {
+                // NOTE: In SmtpTransport URIs, the authType comes last!
+                authType = AuthType.valueOf(userInfoParts[2]);
+                username = decodeUtf8(userInfoParts[0]);
+                password = decodeUtf8(userInfoParts[1]);
+                clientCertificateAlias = decodeUtf8(userInfoParts[3]);
             }
         }
 
@@ -185,6 +191,8 @@ public class SmtpTransport extends Transport {
         if (authType != null) {
             if (AuthType.EXTERNAL == authType) {
                 userInfo = userEnc + ":" + clientCertificateAliasEnc + ":" + authType.name();
+            } else if (!clientCertificateAliasEnc.isEmpty()) {
+                userInfo = userEnc + ":" + passwordEnc + ":" + authType.name() + ":" + clientCertificateAliasEnc;
             } else {
                 userInfo = userEnc + ":" + passwordEnc + ":" + authType.name();
             }

@@ -1,21 +1,7 @@
 package com.fsck.k9.mail.store.imap;
 
 
-import java.io.IOException;
-import java.nio.charset.CharacterCodingException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Deque;
-import java.util.EnumSet;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
 import android.net.ConnectivityManager;
-
 import com.fsck.k9.mail.AuthType;
 import com.fsck.k9.mail.ConnectionSecurity;
 import com.fsck.k9.mail.Flag;
@@ -30,6 +16,19 @@ import com.fsck.k9.mail.ssl.TrustedSocketFactory;
 import com.fsck.k9.mail.store.RemoteStore;
 import com.fsck.k9.mail.store.StoreConfig;
 import timber.log.Timber;
+
+import java.io.*;
+import java.nio.charset.CharacterCodingException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Deque;
+import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 
 /**
@@ -78,6 +77,7 @@ public class ImapStore extends RemoteStore {
         super(storeConfig, trustedSocketFactory);
 
         ImapStoreSettings settings;
+        Timber.i("Store URI is " + storeConfig.getStoreUri());
         try {
             settings = decodeUri(storeConfig.getStoreUri());
         } catch (IllegalArgumentException e) {

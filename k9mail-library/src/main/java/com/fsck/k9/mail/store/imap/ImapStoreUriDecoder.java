@@ -1,13 +1,13 @@
 package com.fsck.k9.mail.store.imap;
 
 
-import java.net.URI;
-import java.net.URISyntaxException;
-
 import com.fsck.k9.mail.AuthType;
 import com.fsck.k9.mail.ConnectionSecurity;
 import com.fsck.k9.mail.ServerSettings;
 import com.fsck.k9.mail.ServerSettings.Type;
+
+import java.net.URI;
+import java.net.URISyntaxException;
 
 import static com.fsck.k9.mail.helper.UrlEncodingHelper.decodeUtf8;
 
@@ -82,7 +82,7 @@ class ImapStoreUriDecoder {
             String userinfo = imapUri.getUserInfo();
             String[] userInfoParts = userinfo.split(":");
 
-            if (userinfo.endsWith(":")) {
+            if (userinfo.endsWith("::")) {
                 // Last field (password/certAlias) is empty.
                 // For imports e.g.: PLAIN:username: or username:
                 // Or XOAUTH2 where it's a valid config - XOAUTH:username:
@@ -111,6 +111,13 @@ class ImapStoreUriDecoder {
                 } else {
                     password = decodeUtf8(userInfoParts[2]);
                 }
+            } else if (userInfoParts.length == 4) {
+                // Standard encoding
+                // PLAIN:username:password:certAlias
+                authenticationType = AuthType.valueOf(userInfoParts[0]);
+                username = decodeUtf8(userInfoParts[1]);
+                password = decodeUtf8(userInfoParts[2]);
+                clientCertificateAlias = decodeUtf8(userInfoParts[3]);
             }
         }
 

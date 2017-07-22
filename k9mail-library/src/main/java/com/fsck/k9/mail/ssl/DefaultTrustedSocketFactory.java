@@ -1,26 +1,25 @@
 package com.fsck.k9.mail.ssl;
 
 
-import java.io.IOException;
+import android.content.Context;
+import android.net.SSLCertificateSocketFactory;
+import android.os.Build;
+import android.text.TextUtils;
+import com.fsck.k9.mail.MessagingException;
+import timber.log.Timber;
+
+import javax.net.ssl.KeyManager;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManager;
+import java.io.*;
 import java.net.Socket;
 import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-
-import android.content.Context;
-import android.net.SSLCertificateSocketFactory;
-import android.os.Build;
-import android.text.TextUtils;
-
-import com.fsck.k9.mail.MessagingException;
-import javax.net.ssl.KeyManager;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLSocket;
-import javax.net.ssl.SSLSocketFactory;
-import javax.net.ssl.TrustManager;
-import timber.log.Timber;
 
 
 /**
@@ -184,7 +183,10 @@ public class DefaultTrustedSocketFactory implements TrustedSocketFactory {
         TrustManager[] trustManagers = new TrustManager[] { TrustManagerFactory.get(host, port) };
         KeyManager[] keyManagers = null;
         if (!TextUtils.isEmpty(clientCertificateAlias)) {
+            Timber.i("Using certificate " + clientCertificateAlias);
             keyManagers = new KeyManager[] { new KeyChainKeyManager(context, clientCertificateAlias) };
+        } else {
+            Timber.i("Certificate empty");
         }
 
         SSLContext sslContext = SSLContext.getInstance("TLS");

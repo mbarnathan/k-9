@@ -1,12 +1,13 @@
 package com.fsck.k9.mail.store.imap;
 
 
+import com.fsck.k9.mail.AuthType;
+import com.fsck.k9.mail.ServerSettings;
+import timber.log.Timber;
+
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Map;
-
-import com.fsck.k9.mail.AuthType;
-import com.fsck.k9.mail.ServerSettings;
 
 import static com.fsck.k9.mail.helper.UrlEncodingHelper.encodeUtf8;
 
@@ -45,10 +46,12 @@ class ImapStoreUriCreator {
 
         AuthType authType = server.authenticationType;
         String userInfo;
-        if (authType == AuthType.EXTERNAL) {
-            userInfo = authType.name() + ":" + userEnc + ":" + clientCertificateAliasEnc;
-        } else {
-            userInfo = authType.name() + ":" + userEnc + ":" + passwordEnc;
+        userInfo = authType.name() + ":" + userEnc;
+        if (!passwordEnc.isEmpty()) {
+            userInfo = userInfo + ":" + passwordEnc;
+        }
+        if (!clientCertificateAliasEnc.isEmpty()) {
+            userInfo = userInfo + ":" + clientCertificateAliasEnc;
         }
         try {
             Map<String, String> extra = server.getExtra();
@@ -63,6 +66,7 @@ class ImapStoreUriCreator {
             } else {
                 path = "/1|";
             }
+            Timber.i("User info URI is " + userInfo);
             return new URI(scheme, userInfo, server.host, server.port, path, null, null).toString();
         } catch (URISyntaxException e) {
             throw new IllegalArgumentException("Can't create ImapStore URI", e);
